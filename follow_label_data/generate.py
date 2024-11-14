@@ -20,12 +20,12 @@ total_memory_file_number = 100
 write_locks = [threading.Lock() for _ in range(total_memory_file_number)]
 
 global_vars = set()
-max_len = 2*1024
+max_len = 1*1024
 n_thread = 32
 n_futures = 32
 total_memory_count = 0 
 max_memory_size = 2*1024*1024
-max_depth = 2 # 初始的thm尝试探索深一些
+max_depth = 2
 min_thm_number = 20000
 max_thm_number = 27000
 zip_offset = 200
@@ -99,7 +99,7 @@ def get_block_train_data(targets, conditions, dvs, tails=[]):
 def get_args_train_data(block, arg_map):
     args = []
     for _, arg_name in block['args']:
-        args.append("<arg> " + arg_map.get(arg_name, arg_name) + " </arg>")
+        args.append(arg_map.get(arg_name, arg_name) + " </arg>")
     return " ".join(args)
 
 def get_axiom_train_data(axiom, arg_map={}):
@@ -109,7 +109,7 @@ def get_axiom_train_data(axiom, arg_map={}):
     rst = get_block_train_data(new_targets, new_conditions, new_diffs)
     splitted_label = "<label> " + ' '.join(list(axiom['label'])) + " </label>"
     args = get_args_train_data(axiom, arg_map)
-    rst = " ".join(["<state>", rst, "</state>", splitted_label, args]) # [state, action, <qed>]
+    rst = " ".join([rst, splitted_label, args]) # [state, action, <qed>]
     return [tokenizer(rst)], [] 
 
 
@@ -137,8 +137,8 @@ def get_thm_train_data(thm, arg_map={}):
         )
         state = get_block_train_data(new_a_targets, new_a_conditions, new_a_dvs)
         splitted_label = "<label> " + ' '.join(list(label)) + " </label>"
-        args = " ".join(["<arg> " + arg + " </arg>" for arg in args])
-        memory = " ".join(["<state>", state, "</state>", splitted_label, args]) 
+        args = " ".join([arg + " </arg>" for arg in args])
+        memory = " ".join([state, splitted_label, args]) 
         memories.append(tokenizer(memory))
 
     new_operators = []
@@ -324,7 +324,7 @@ if __name__ == "__main__":
         shutil.rmtree('databases')
 
     # 下载数据集并且解压到databases文件夹
-    dataset_path = hf_hub_download(repo_id="Follow-Lang/set.mm", repo_type="dataset", filename="datasets/set.mm.zip")
+    dataset_path = hf_hub_download(repo_id="Follow-Lang/set.mm.json", repo_type="dataset", filename="set.mm.zip")
     with zipfile.ZipFile(dataset_path, 'r') as zip_ref:
         zip_ref.extractall("databases/")
 
@@ -352,8 +352,8 @@ if __name__ == "__main__":
         for idx in range(200):
             global_vars.add(f"g{t[0]}{idx}")
             global_vars.add(f"v{t[0]}{idx}")
-    
-    for new_word in ['<state>', '</state>', '<action>', '</action>', '<qed>', '<label>', '</label>', '<arg>', '</arg>']:
+
+    for new_word in ['<action>', '</action>', '<qed>', '<start>', '<label>', '</label>', '</arg>']:
         if new_word not in words:
             words.append(new_word)
     
@@ -375,7 +375,46 @@ if __name__ == "__main__":
     
     with open("databases/words.txt", 'w') as f:
         f.writelines([word + '\n' for word in words])
-    upload("databases/words.txt")
+
+    # 上传数据集到 Hugging Face
+    api = HfApi()
+    repo_id = upload_repo_id
+    try:
+        api.dataset_info(repo_id)
+        print(f"数据集 {repo_id} 已存在。")
+    except RepositoryNotFoundError:
+        print(f"数据集 {repo_id} 不存在，正在创建...")
+        api.create_repo(repo_id, repo_type="dataset")
+    # 通过 upload_with_progress 进行直接上传
+    with open("databases/words.txt", "rb") as f:  # 以二进制模式打开文件
+        # 进行上传
+        try:
+            # 上传 README.md 文件
+            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            readme_path = os.path.join(current_dir, "README.md")
+            if os.path.exists(readme_path):
+                print("开始上传 README.md")
+                with open(readme_path, "rb") as readme_f:
+                    api.upload_file(
+                        path_or_fileobj=readme_f,
+                        path_in_repo="README.md",
+                        repo_id=repo_id,
+                        repo_type="dataset",
+                    )
+                print("README.md 上传成功")
+            else:
+                print("未找到 README.md 文件")
+
+            print("开始上传 words.txt")
+            api.upload_file(
+                path_or_fileobj=f,  # 传递文件对象
+                path_in_repo="words.txt",
+                repo_id=repo_id,
+                repo_type="dataset",
+            )
+            print("words.txt 上传成功")  # 上传成功提示
+        except Exception as e:
+            print(f"上传失败: {e}")
 
     if max_thm_number < 0:
         max_thm_number = len(thms)
