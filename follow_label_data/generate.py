@@ -25,10 +25,10 @@ n_thread = 32
 n_futures = 32
 total_memory_count = 0 
 max_memory_size = 2*1024*1024
-max_depth = 2
-min_thm_number = 20000
-max_thm_number = 27000
-zip_offset = 200
+max_depth = 1
+min_thm_number = 0
+max_thm_number = -1
+zip_offset = 0
 
 upload_repo_id = "Follow-Lang/set.mm.label"
 
@@ -129,7 +129,8 @@ def get_thm_train_data(thm, arg_map={}):
 
     actions = thm["actions"]
     operators = thm["operators"]
-    
+
+    # memories, _ = get_axiom_train_data(thm, arg_map) # deep = 0 时，当前theorem可能未被调用过，需要补充这部分的样本 
     memories = []
     for (a_targets, a_conditions, a_dvs), (label, args) in zip(actions, operators):
         new_a_targets, new_a_conditions, new_a_dvs = stmt_subs(
@@ -173,23 +174,20 @@ def get_deep_memory(operations, depth=0, max_len=max_len):
     for op_label, op_args in operations:
         try:
             op_memories, op_operations = get_train_data(op_label, op_args)
-            for memory in op_memories:
-                if not check_seq(memory):
-                    continue
-                total_memory_count += 1
-                yield memory
-                if total_memory_count >= max_memory_size:
-                    break
-            if total_memory_count >= max_memory_size:
-                break
+            if depth == max_depth:
+                for memory in op_memories:
+                    if not check_seq(memory):
+                        continue
+                    total_memory_count += 1
+                    yield memory
             next_level_operations.extend(op_operations)
         except Exception as e:
             print('get_deep_memory', e) 
             continue 
     
     # BFS, 保证deep完整 
-    if len(next_level_operations) > 0 and depth > 0 and total_memory_count < max_memory_size:
-        yield from get_deep_memory(next_level_operations, depth - 1, max_len) 
+    if len(next_level_operations) > 0 and depth < max_depth and total_memory_count < max_memory_size:
+        yield from get_deep_memory(next_level_operations, depth + 1, max_len) 
 
 def write_memory(memory, folder, zip_index):
     try:
@@ -282,7 +280,7 @@ def run(start, end, depth, batch_size=128):
     global total_memory_count, max_memory_size
     total_memory_count = 0
     file_index = zip_offset
-    train_dir = f'databases/train_{file_index}'
+    train_dir = f'databases/train_{file_index}_deep{max_depth}'
     
     try:
         if os.path.exists(train_dir):
@@ -302,7 +300,7 @@ def run(start, end, depth, batch_size=128):
                 shutil.rmtree(train_dir)
                 os.remove(output_zip)
                 file_index += 1
-                train_dir = f'databases/train_{file_index}'
+                train_dir = f'databases/train_{file_index}_deep{max_depth}'
                 total_memory_count = 0
                 if os.path.exists(train_dir):
                     shutil.rmtree(train_dir)
@@ -417,7 +415,7 @@ if __name__ == "__main__":
             print(f"上传失败: {e}")
 
     if max_thm_number < 0:
-        max_thm_number = len(thms)
+        max_thm_number = thms.index("ex-natded5.2") 
     
-    run(min_thm_number, max_thm_number, depth=max_depth, batch_size=n_futures)
+    run(min_thm_number, max_thm_number, depth=0, batch_size=n_futures)
 
